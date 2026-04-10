@@ -1,0 +1,5 @@
+{
+  "name": "Fake News Detector",
+  "description": "A simple yet powerful AI-driven platform to verify news authenticity, featuring confidence meters, detailed explanations, and an interactive chatbot.",
+  "requestFramePermissions": []
+}

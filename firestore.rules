@@ -1,0 +1,105 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Document ID: {userId}
+    // Fields:
+    //   - uid: string (required) - The unique identifier for the user.
+    //   - displayName: string (optional) - The user's display name.
+    //   - email: string (required, email format) - The user's email address.
+    //   - photoURL: string (optional, URL format) - The user's profile photo URL.
+    //   - createdAt: timestamp (optional) - The timestamp when the profile was created.
+    //
+    // Collection: analyses
+    // Document ID: {analysisId}
+    // Fields:
+    //   - id: string (required) - Unique ID for the analysis.
+    //   - userId: string (required) - The UID of the user who performed the analysis.
+    //   - newsText: string (required, max 5000 chars) - The original news text or URL analyzed.
+    //   - confidenceScore: number (required, 0-100) - Confidence score from 0 to 100.
+    //   - verdict: string (required, enum: TRUE, FALSE, MISLEADING, UNVERIFIED) - The final verdict.
+    //   - explanation: string (required, max 10000 chars) - Detailed explanation of the verdict.
+    //   - pros: list (optional, max 10 items) - Points supporting the news.
+    //   - cons: list (optional, max 10 items) - Points debunking the news.
+    //   - timestamp: timestamp (required) - When the analysis was performed.
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "shubhammahi098@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function isValidUrl(url) {
+      return url is string && (url.matches("^https://.*") || url.matches("^http://.*"));
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email']) &&
+             data.uid == request.auth.uid &&
+             isValidEmail(data.email) &&
+             (!('displayName' in data) || (data.displayName is string && data.displayName.size() < 100)) &&
+             (!('photoURL' in data) || isValidUrl(data.photoURL)) &&
+             (!('role' in data) || (data.role in ['admin', 'user']));
+    }
+
+    function isValidAnalysis(data) {
+      return data.keys().hasAll(['userId', 'newsText', 'confidenceScore', 'verdict', 'explanation', 'timestamp']) &&
+             data.userId == request.auth.uid &&
+             data.newsText is string && data.newsText.size() > 0 && data.newsText.size() <= 5000 &&
+             data.confidenceScore is number && data.confidenceScore >= 0 && data.confidenceScore <= 100 &&
+             data.verdict in ['TRUE', 'FALSE', 'MISLEADING', 'UNVERIFIED'] &&
+             data.explanation is string && data.explanation.size() <= 10000 &&
+             (!('pros' in data) || (data.pros is list && data.pros.size() <= 10)) &&
+             (!('cons' in data) || (data.cons is list && data.cons.size() <= 10));
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data);
+    }
+
+    match /analyses/{analysisId} {
+      allow read: if isDocOwner() || isAdmin();
+      allow create: if isAuthenticated() && isValidAnalysis(request.resource.data);
+      allow update: if false; // Analyses are immutable
+      allow delete: if isDocOwner() || isAdmin();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
